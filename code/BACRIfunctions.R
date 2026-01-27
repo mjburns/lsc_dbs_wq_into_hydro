@@ -147,20 +147,20 @@ scmMap_v2 <- function(pipeID, addLegend = TRUE,addSCMNetwork = TRUE, ZoomToSCMs 
   allsubcs <- allupstream(as.data.frame(subcs), pipeID, "pipeID")
   SCMsi <- which(SCMs$pipeID %in% allsubcs)
   if(ZoomToSCMs){
-    plot(SCMs$geometry[SCMsi], , pch = 21, type = 'n')
+    plot(SCMs$geom[SCMsi], , pch = 21, type = 'n')
     #plot(subcs$geometry[subcs$pipeID %in% allsubcs], lty = 2, lwd = 2, border = "darkgreen", add = TRUE)
 #    bounds <- par("usr")
   }else{
     #plot(subcs$geometry[subcs$pipeID %in% allsubcs], lty = 2, lwd = 2, border = "darkgreen")
   }
   # plot(parcels$geometry[parcels$pipeID %in% allsubcs], lty = 1, lwd = 1, border = gray(0.75), add = TRUE)
-  plot(ia$geometry[ia$pipeID %in% allsubcs], lty = 1,lwd = 0.5,
+  plot(ia$geom[ia$pipeID %in% allsubcs], lty = 1,lwd = 0.5,
        col = c(gray(0.6),gray(0.85),gray(0.85))[match(ia$conn[ia$pipeID %in% allsubcs],c(1,0,0.5))],
        border = c(gray(0.6),gray(0.85),gray(0.85))[match(ia$conn[ia$pipeID %in% allsubcs],c(1,0,0.5))], 
   #     border = c("#FFCC99","#660000")[match(ia$conn[ia$pipeID %in% allsubcs],0:1)],
   #     col = c(scales::alpha("#FFCC99",0.5), scales::alpha("#660000",0.5))[match(ia$conn[ia$pipeID %in% allsubcs],0:1)],
        add = TRUE)
-   plot(SCMs$geometry[SCMsi], , pch = 19, col = c("#5aae61","blue","#fdae61")[match(SCMs$type[SCMsi],c("tank","rg","dd"))], 
+   plot(SCMs$geom[SCMsi], , pch = 19, col = c("#5aae61","blue","#fdae61")[match(SCMs$type[SCMsi],c("tank","rg","dd"))], 
        add = TRUE)
   if(addSCMNetwork){
     SCMs$temp <- 1
@@ -171,14 +171,14 @@ scmMap_v2 <- function(pipeID, addLegend = TRUE,addSCMNetwork = TRUE, ZoomToSCMs 
       slice(c(i,
               which(SCMs$scmID == SCMs$nextds[i]))) %>% group_by(temp) %>%
                     summarize(m = mean(as.numeric(pipeID)), .groups = 'drop') %>% st_cast("LINESTRING")
-    plot(x$geometry, add = TRUE)
+    plot(x$geom, add = TRUE)
     }
     }
   }
    plot(pipes$geom, lty = 1, lwd = 2, col = "#8c510a", add = TRUE)
-   plot(streams$geometry, lty = 1, lwd = 2, col = "dodgerblue", add = TRUE)
+   plot(streams$geom, lty = 1, lwd = 2, col = "dodgerblue", add = TRUE)
    if(pipeID < 100)
-     plot(L4_headwaters$geometry, lty = 1, lwd = 1.5, col = "dodgerblue", add = TRUE)
+     plot(L4_headwaters$geom, lty = 1, lwd = 1.5, col = "dodgerblue", add = TRUE)
    if(addLegend){
     legend("bottomleft", pch = 19, col = c("#5aae61","blue","#fdae61"), 
            legend = c("Tank","Raingarden","Downpipe diverter"), cex = 1,box.lwd = 2)
@@ -2230,6 +2230,217 @@ ct <- function (rows, cols, values = NULL, FUN = sum, convertNAToZero = TRUE,...
   if(convertNAToZero)
     results[is.na(results)] <- 0
   as.data.frame(results)
+}
+
+
+scmMap_v3 <- function(pipeID,
+                      addLegend = TRUE,
+                      addSCMNetwork = TRUE,
+                      ZoomToSCMs = FALSE,
+                      zoom_buffer = 150,         # map units (e.g., metres in MGA)
+                      show_pipes = TRUE,
+                      show_streams = TRUE,
+                      show_L4_headwaters = TRUE) {
+  
+  # ---- deps ----
+  stopifnot(requireNamespace("sf", quietly = TRUE))
+  stopifnot(requireNamespace("dplyr", quietly = TRUE))
+  stopifnot(requireNamespace("ggplot2", quietly = TRUE))
+  
+  `%>%` <- dplyr::`%>%`
+  
+  # ---- upstream set + subset indices ----
+  allsubcs <- allupstream(as.data.frame(subcs), pipeID, "pipeID")
+  SCMsi    <- which(SCMs$pipeID %in% allsubcs)
+  
+  # ---- Impervious subset with stable mapping ----
+  ia_sub <- ia[ia$pipeID %in% allsubcs, , drop = FALSE]
+  
+  ia_sub$conn_f <- factor(
+    dplyr::case_when(
+      ia_sub$conn == 1   ~ "Connected",
+      ia_sub$conn == 0   ~ "Unconnected",
+      ia_sub$conn == 0.5 ~ "Unconnected",   # your original mapping
+      TRUE               ~ NA_character_
+    ),
+    levels = c("Connected", "Unconnected")
+  )
+  
+  ia_fill <- c("Connected" = grDevices::gray(0.60),
+               "Unconnected" = grDevices::gray(0.85))
+  
+  # ---- SCM subset + styling ----
+  scms_sub <- SCMs[SCMsi, , drop = FALSE]
+  
+  scms_sub$type_f <- factor(
+    scms_sub$type,
+    levels = c("tank", "rg", "dd"),
+    labels = c("Tank", "Raingarden", "Downpipe diverter")
+  )
+  
+  scm_cols <- c("Tank" = "#5aae61",
+                "Raingarden" = "blue",
+                "Downpipe diverter" = "#fdae61")
+  
+  # ---- Build SCM network lines (sf) ----
+  net_lines <- NULL
+  if (addSCMNetwork && nrow(scms_sub) > 0) {
+    
+    # only keep valid downstream links
+    # nextds appears to refer to scmID (string?) in your code
+    links <- scms_sub %>%
+      dplyr::mutate(.i = dplyr::row_number()) %>%
+      dplyr::filter(!is.na(nextds),
+                    !(nextds %in% c("land", "stormwater"))) %>%
+      dplyr::select(.i, scmID, nextds)
+    
+    if (nrow(links) > 0) {
+      # join to get downstream point geometry
+      down <- SCMs %>%
+        dplyr::select(scmID, geom) %>%
+        dplyr::rename(nextds = scmID, geom_ds = geom)
+      
+      up <- scms_sub %>%
+        dplyr::select(scmID, geom) %>%
+        dplyr::rename(geom_us = geom)
+      
+      links2 <- links %>%
+        dplyr::left_join(up, by = "scmID") %>%
+        dplyr::left_join(down, by = "nextds") %>%
+        dplyr::filter(!is.na(geom_us), !is.na(geom_ds))
+      
+      if (nrow(links2) > 0) {
+        # cast points to coords and build LINESTRING
+        crs_use <- sf::st_crs(SCMs)
+        
+        make_line <- function(p_us, p_ds) {
+          cu <- sf::st_coordinates(p_us)[1, 1:2]
+          cd <- sf::st_coordinates(p_ds)[1, 1:2]
+          sf::st_linestring(rbind(cu, cd))
+        }
+        
+        lines_sfc <- sf::st_sfc(
+          lapply(seq_len(nrow(links2)), function(k) make_line(links2$geom_us[k], links2$geom_ds[k])),
+          crs = crs_use
+        )
+        
+        net_lines <- sf::st_sf(geom = lines_sfc)
+      }
+    }
+  }
+  
+  # ---- Zoom bbox (optional) ----
+  coord_args <- list()
+  if (ZoomToSCMs && nrow(scms_sub) > 0) {
+    bb <- sf::st_bbox(scms_sub)
+    # buffer in map units
+    xlim <- c(bb["xmin"] - zoom_buffer, bb["xmax"] + zoom_buffer)
+    ylim <- c(bb["ymin"] - zoom_buffer, bb["ymax"] + zoom_buffer)
+    coord_args <- list(xlim = xlim, ylim = ylim, expand = FALSE)
+  }
+  
+  # ---- Base ggplot ----
+  p <- ggplot2::ggplot() +
+    # IA polygons
+    ggplot2::geom_sf(
+      data = ia_sub,
+      ggplot2::aes(fill = conn_f),
+      color = NA
+    ) +
+    ggplot2::scale_fill_manual(
+      values = ia_fill,
+      drop = FALSE,
+      na.value = ia_fill["Unconnected"],
+      name = "Impervious areas"
+    )
+  
+  # SCM network lines (behind points, above IA)
+  if (!is.null(net_lines) && nrow(net_lines) > 0) {
+    p <- p + ggplot2::geom_sf(
+      data = net_lines,
+      color = grDevices::gray(0.25),
+      linewidth = 0.4,
+      alpha = 0.8,
+      show.legend = FALSE
+    )
+  }
+  
+  # Stormwater pipes + streams
+  if (show_pipes) {
+    p <- p + ggplot2::geom_sf(
+      data = pipes,
+      color = "#8c510a",
+      linewidth = 0.7,
+      show.legend = addLegend
+    )
+  }
+  if (show_streams) {
+    p <- p + ggplot2::geom_sf(
+      data = streams,
+      color = "dodgerblue",
+      linewidth = 0.7,
+      show.legend = addLegend
+    )
+  }
+  
+  # L4 headwaters
+  if (show_L4_headwaters && pipeID < 100) {
+    p <- p + ggplot2::geom_sf(
+      data = L4_headwaters,
+      color = "dodgerblue",
+      linewidth = 0.6,
+      alpha = 0.9,
+      show.legend = FALSE
+    )
+  }
+  
+  # SCM points
+  if (nrow(scms_sub) > 0) {
+    p <- p + ggplot2::geom_sf(
+      data = scms_sub,
+      ggplot2::aes(color = type_f),
+      size = 2.0,
+      show.legend = addLegend
+    ) +
+      ggplot2::scale_color_manual(
+        values = scm_cols,
+        drop = FALSE,
+        name = NULL
+      )
+  }
+  
+  # coordinate handling
+  if (length(coord_args) > 0) {
+    p <- p + do.call(ggplot2::coord_sf, coord_args)
+  } else {
+    p <- p + ggplot2::coord_sf(expand = FALSE)
+  }
+  
+  # theme: clean map panel with frame, no axes
+  p <- p +
+    ggplot2::theme_void(base_size = 10) +
+    ggplot2::theme(
+      legend.position = if (addLegend) c(0.02, 0.02) else "none",
+      legend.justification = c(0, 0),
+      legend.background = ggplot2::element_rect(fill = scales::alpha("white", 0.85), color = "grey60"),
+      legend.key = ggplot2::element_rect(fill = NA, color = NA),
+      panel.border = ggplot2::element_rect(fill = NA, color = "black", linewidth = 0.8),
+      plot.margin = ggplot2::margin(0, 0, 0, 0)
+    )
+  
+  # If you want separate legends (like your old bottom-left / bottom-right),
+  # you can do that at assembly-time with patchwork guides = "collect".
+  
+  # Return plot + useful objects for later (bbox etc.)
+  out <- list(
+    plot = p,
+    allsubcs = allsubcs,
+    scms = scms_sub,
+    ia = ia_sub,
+    network = net_lines,
+    bbox = if (ZoomToSCMs && nrow(scms_sub) > 0) sf::st_bbox(scms_sub) else NULL
+  )
+  return(out)
 }
 
 

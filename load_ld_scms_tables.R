@@ -21,6 +21,22 @@ source("code/BACRIfunctions.R")
 # The following files (loaded above) are derived from the database tables using code in the Rmd files
 # ei_ts.rda - see derivation in ei_ts chunk of WalshEtAl_wrr2021_S1-2.Rmd
 
+#Might have to manually load?
+scms <- st_read("~/Documents/Git/lsc_dbs_wq_into_hydro/data/fig1_data/scms.gpkg")
+ia <- st_read("~/Documents/Git/lsc_dbs_wq_into_hydro/data/fig1_data/ia.gpkg")
+subcs <- st_read("~/Documents/Git/lsc_dbs_wq_into_hydro/data/fig1_data/subcs.gpkg")
+parcels <- st_read("~/Documents/Git/lsc_dbs_wq_into_hydro/data/fig1_data/parcels.gpkg")
+cats <- st_read("~/Documents/Git/lsc_dbs_wq_into_hydro/data/fig1_data/cats.gpkg")
+sites <- st_read("~/Documents/Git/lsc_dbs_wq_into_hydro/data/fig1_data/sites.gpkg")
+catIA <- st_read("~/Documents/Git/lsc_dbs_wq_into_hydro/data/fig1_data/catIA.gpkg")
+catIA <- st_read("~/Documents/Git/lsc_dbs_wq_into_hydro/data/fig1_data/catIA.gpkg")
+siteLabels <- st_read("~/Documents/Git/lsc_dbs_wq_into_hydro/data/fig1_data/siteLabels.gpkg")
+Australia_GDA94_GCS <- st_read("~/Documents/Git/lsc_dbs_wq_into_hydro/data/fig1_data/Australia_GDA94_GCS.gpkg")
+Victoria_GDA94_GCS <- st_read("~/Documents/Git/lsc_dbs_wq_into_hydro/data/fig1_data/Victoria_GDA94_GCS.gpkg")
+streams <- st_read("~/Documents/Git/lsc_dbs_wq_into_hydro/data/fig1_data/streams.gpkg")
+rain_gauge_locs.gpkg <- st_read("~/Documents/Git/lsc_dbs_wq_into_hydro/data/fig1_data/rain_gauge_locs.gpkg")
+
+
 #Tidy up some of the data ready for analysis and plotting
 SCMs <- scms; rm(scms)
 #add Little Stringybark and Dobsons impervious data to other catchments

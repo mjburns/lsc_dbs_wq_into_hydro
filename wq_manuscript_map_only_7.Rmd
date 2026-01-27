@@ -1,0 +1,597 @@
+---
+title: "Dispersed urban-stormwater control improved stream water quality in a catchment-scale experiment"
+author:
+  - Christopher J. Walsh, Moss Imberger, Matthew J. Burns, Darren G. Bos, and Tim D. Fletcher
+date: "School of Ecosystem and Forest Sciences, The University of Melbourne, 500 Yarra Boulevard, Burnley, 3121 Victoria, Australia"
+output:   
+  word_document: 
+    reference_docx: AGU_Manuscript_template.docx
+csl: wrr.csl
+bibliography: lsc_dbs_wq.bib
+editor_options: 
+  markdown: 
+    wrap: 120
+  chunk_output_type: inline
+nocite: |
+  @allaire2021,@CarpenterEtAl_2017,@walsh2021,@Vehtari_EtAl_2017,@RCoreTeam_2020,@StanDevelopmentTeam_2020,@GelmanEtAl_2004,@StanDevelopmentTeam_2020b
+---
+
+Corresponding author: Christopher J. Walsh (cwalsh\@unimelb.edu.au).
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, error = FALSE,
+                      dev = "png", dpi = 300)
+requiredPackages <- c("readxl","rethinking","scales","flextable","RColorBrewer",
+                      "ggsci","lubridate")
+lapply(requiredPackages, require, character.only = TRUE)
+# load bespoke functions for producing plots and tables
+source("code/misc_functions.R")
+source("https://tools.thewerg.unimelb.edu.au/mwstr/data/mwstr_network_functions.R")
+source("https://tools.thewerg.unimelb.edu.au/documents/misc/bugDatabaseFunctions.R")
+#used for table_for_word function
+# Check all files on OSF are in data directory - if not download them
+source("code/load_data_from_OSF.R")
+# Check for data for Figure 1 (from Walsh et al (2022) PLOS Water data repository), 
+# download if necessary, and load into environment
+source("load_ld_scms_tables.R") #loads spatial sites table - distinguish from wq sites excel table
+sites_sf <- sites
+rain_gauges <- sf::st_read("data/fig1_data/rain_gauge_locs.gpkg")
+pipes <- sf::st_read("data/fig1_data/pipes_L4_D8.gpkg") # From MW council drain data
+L4_headwaters <- sf::st_read("data/fig1_data/L4_headwaters.gpkg")  #from mwstr v1.2 network
+sites <- data.frame(readxl::read_excel("data/wq_data_compiled.xlsx"))
+wq_data <- data.frame(readxl::read_excel("data/wq_data_compiled.xlsx", 
+                                         sheet = "wq_data"), stringsAsFactors = FALSE)
+wq_data$date_time <- lubridate::ymd_hms(wq_data$date_time)
+#transformations used for modeling
+wq_data$lFRP <- log10(wq_data$FRP)
+wq_data$lTP <- log10(wq_data$TP)
+wq_data$lNH3 <- log10(wq_data$NH3)
+wq_data$lTSS <- log10(wq_data$TSS)
+wq_data$sNOx <- wq_data$NOx^0.5
+wq_data$lTN <- log10(wq_data$TN)
+wq_data$sEC <- wq_data$EC^0.5
+wq_data$lTem <- log10(wq_data$Tem)
+
+# Calculations of proportions of below-detection-limit records reported below
+# sum(wq_data$FRP < 0.001, na.rm=TRUE)/sum(!is.na(wq_data$FRP))
+# sum(wq_data$NH3 < 0.001, na.rm=TRUE)/sum(!is.na(wq_data$NH3))
+# sum(wq_data$NOx < 0.001, na.rm=TRUE)/sum(!is.na(wq_data$NOx))
+# sum(wq_data$TN < 0.02, na.rm=TRUE)/sum(!is.na(wq_data$TN))
+# sum(wq_data$TP < 0.01, na.rm=TRUE)/sum(!is.na(wq_data$TP))
+# sum(wq_data$TSS < 0.5, na.rm=TRUE)/sum(!is.na(wq_data$TSS))
+
+# calculation of mean annual rainfall over the study period in each catchment
+# rainfall <- sqlQuery("SELECT sitecode, dateTime, Rain_depth FROM rainfall", "lsc")
+# rainfall$dateTime <- lubridate::ymd_hms(rainfall$dateTime)
+# tot_rain <- aggregate(rainfall$Rain_depth, by = list(site = rainfall$sitecode), FUN = sum)
+# n_years <- as.numeric(diff.Date(range(rainfall$dateTime))/365.25)
+# range(tot_rain$x/n_years) # 
+ann_rain <- "870-1090"
+
+new_X <- data.frame(read_excel("~/Documents/git/lsc_dbs_wq/data/prediction_set.xlsx",
+                                      sheet = "new_X_tp"), stringsAsFactors = FALSE)
+new_X_N <- data.frame(read_excel("~/Documents/git/lsc_dbs_wq/data/prediction_set.xlsx",
+                                      sheet = "new_X_tn"), stringsAsFactors = FALSE)
+
+#data frame matching ultimate EI (degrd) and maximum restr achieved at the 6 experimental sites
+exp_sites <- data.frame(site = c("D8","D4","Ln","L4","Ls","L1"),
+                        restr_ind = c(5,6,2,4,3,7),
+                        max_restr = unique(new_X$restr)[c(5,6,2,4,3,7)],
+                        degrd_ind = c(4:8,10),
+                        degrd = unique(new_X$degrd)[c(4:8,10)])
+
+ys <- c("lTP","lFRP","lTN","sNOx","lNH3","lTem","sEC","lTSS")
+vars <- c("tp","frp","tn","nox","nh3","tem","ec","tss")
+ylab_expressions <- list(tp = expression(bold(paste("Total P (", mu, "g P/L)"))),
+                         frp = expression(bold(paste("FRP (", mu, "g P/L)"))),
+                         tn = expression(bold(paste("Total N (mg N/L)"))),
+                         nox = expression(bold(paste("NO"[x], "(mg N/L)"))),
+                         nh3 = expression(bold(paste("NH"[4]^+{}, " (", mu, "g N/L)"))),
+                         tem = expression(bold(paste("Temp. (",degree,"C)"))),
+                         ec = expression(bold(paste("EC (mS/cm)"))),
+                         tss = expression(bold(paste("TSS (mg/L)"))))
+mod_summ <- read.csv("data/mod_summ.csv")
+```
+
+```{r}
+site_tab <- data.frame(Stream = c("Lyrebird","Olinda","Sassafras","Brushy","Ferny",
+                              "Little Stringybark", "Little Stringybark Sth", "Little Stringybark Central",
+                              "Little Stringybark Nth","Dobsons","Dobsons downstream"),
+                    Code = c("Ly","Ol","Sa","Br","Fe","L4","Ls","L1","Ln","D4","D8"),
+                    Class = c(rep("Reference",3),rep("Control",2),rep("Experimental",6)))
+site_tab <- merge(site_tab, 
+                  sites[c("cat","carea_m2","EI_S1_2001","EI_S1_2019","EI_S_2019","TI_2019","septics")],
+                  by.x = "Code", by.y = "cat", sort = FALSE)
+site_tab$carea_m2 <- round(site_tab$carea_m2*1e-6,1)
+site_tab[c("EI_S1_2001","EI_S1_2019","EI_S_2019","TI_2019")] <- 
+  round(site_tab[c("EI_S1_2001","EI_S1_2019","EI_S_2019","TI_2019")]*100,1)
+site_tab$septics <- round(site_tab$septics,1)
+ft <- table_for_word(site_tab)  
+ft <- compose(ft, part = "header", j = 4, 
+              value = as_paragraph("Catchment area (km",as_sup("2"),")"))
+ft <- compose(ft, part = "header", j = 5,
+         value = as_paragraph("EI",as_sub("S1")," (2001)"))
+ft <- compose(ft, part = "header", j = 6,
+         value = as_paragraph("EI", as_sub("S1")," (2019)"))
+ft <- compose(ft, part = "header", j = 7,
+         value = as_paragraph("EI",as_sub("S")," (2019)"))
+ft <- compose(ft, part = "header", j = 8,
+         value = as_paragraph("TI (2019)"))
+ft <- compose(ft, part = "header", j = 9,
+         value = as_paragraph("Septic tank density (N/km",as_sup("2"),")"))
+ft
+```
+
+\*Ls, L1 and Ln are independent tributaries upstream of L4, † D4 is upstream of D8
+
+```{r fig.width=6.5, fig.height=7}
+tiff("images/Fig 1.tiff", width = 6.5*600, height = 7*600, res = 600, compression = "lzw")
+layout(matrix(c(1,1,1,5,1,1,1,5,1,1,1,6,2,3,4,6), 4,4, byrow = TRUE),
+       heights = c(5,2,5,2), widths = c(4,4,4,8))
+# lo <- layout(matrix(c(1,2,1,3,1,4,1,5,1,6),5,2,byrow=TRUE),widths = c(5.75,1.25), 
+#        heights = c(1.25,1.25,4,1.25,1.25))
+par(mai = c(0.028,0.028,0.028,0.028)*0)
+# A. Map of all 11 catchments (with legends and location maps below)
+plot(catMap11$geom, lty = 3, lwd = 0.5, border = "white")
+title(main = "  a.", adj = 0, line = -1.5, cex.main = 2.5)
+#censored to exclude IA newer than October 2009 (i.e. 2009 IA)
+catIA_2009 <- catIA[is.na(catIA$constructionDate) | (!is.na(catIA$constructionDate) &
+                catIA$constructionDate < "2009-10-01"),]
+plot(catIA_2009$geom,
+     col = c(gray(0.6),gray(0.85),gray(0.85))[match(catIA_2009$conn,c(1,0,0.5))],
+     border = c(gray(0.6),gray(0.85),gray(0.85))[match(catIA_2009$conn,c(1,0,0.5))],
+     lwd = 0.5, add = TRUE)
+#col converts conn = 0.5 to 0 (those surfaces that would be connected if the pits weren't full)..
+#only applies in Wicks subcatchment
+plot(streams$geom, col = "dodgerblue", lwd = 2, add = TRUE)
+plot(catMap11$geom, lty = 3, lwd = 2, border = catMap11$col, add = TRUE)
+plot(siteMap11$geom, pch = 21, bg = siteMap11$col, cex = 1.25, add = TRUE)
+siteLabels$font[siteLabels$font == 1] <- 2 #make both normal and italic fonts bold
+text(st_coordinates(siteLabels),siteLabels$sites_p, cex = 1, font = siteLabels$font)
+arrows(st_coordinates(siteLabels)[siteLabels$siteLabel == "LS"][1]-200,
+       st_coordinates(siteLabels)[siteLabels$siteLabel == "LS"][2],
+       st_coordinates(siteMap11)[siteMap11$sitecode == "LSS0001"][1],
+       st_coordinates(siteMap11)[siteMap11$sitecode == "LSS0001"][2], length = 0.05)
+arrows(st_coordinates(siteLabels)[siteLabels$siteLabel == "LM"][1],
+       st_coordinates(siteLabels)[siteLabels$siteLabel == "LM"][2]+100,
+       st_coordinates(siteMap11)[siteMap11$sitecode == "LIS0001"][1],
+       st_coordinates(siteMap11)[siteMap11$sitecode == "LIS0001"][2], length = 0.05)
+arrows(st_coordinates(siteLabels)[siteLabels$siteLabel == "LN"][1],
+       st_coordinates(siteLabels)[siteLabels$siteLabel == "LN"][2]-100,
+       st_coordinates(siteMap11)[siteMap11$sitecode == "LSN0001"][1],
+       st_coordinates(siteMap11)[siteMap11$sitecode == "LSN0001"][2], length = 0.05)
+plot(rain_gauges$geom, pch = 6, add = TRUE, cex = 1)
+raster::scalebar(2000, xy = c(355500,5801500), 
+                 label= "2 km", cex = 1)
+# bounds of plot b and c derived with par("usr") (commented out in scmMap_v2 function)
+polygon(c(357322.2, 357322.2, 359184.2, 359184.2),
+        c(5815869.4, 5818668.5, 5818668.5, 5815869.4) )
+polygon(c(351825.4, 351825.4, 353125.1, 353125.1),
+        c(5807433.1, 5809387.0, 5809387.0, 5807433.1) )
+rng <- par("usr")
+box(lwd = 2)
+legend("bottomleft", 
+       pch = 15, col = c(gray(0.6),gray(0.85)),cex = 1,
+       legend = c("Connected","Unconnected"), title = "Impervious areas",
+       box.lwd = 2)
+legend("bottomright", legend = "Rain gauges", cex = 1, pch = 6, 
+       pt.cex = 1,box.lwd = 2)
+plot.new()
+legend("center", lty = c(3,3,3), lwd = c(2,2,2), cex = 1,
+       col = c(RColorBrewer::brewer.pal(3,"Dark2")), title = "Catchments",
+       legend = c("Control","Experimental","Reference"), text.col = "white")
+legend("center", pch = 21, cex = 1,
+       pt.bg = c(RColorBrewer::brewer.pal(3,"Dark2")),
+       title = "Catchments",
+       legend = c("Reference","Experimental","Control"), bty = 'n',box.lwd = 2)
+rngPoly <- st_sfc(st_polygon(list(rbind(rng[c(1,3)], rng[c(1,4)], rng[c(2,4)], 
+                                 rng[c(2,3)],rng[c(1,3)]))))
+rngPoly <- st_sf(a = 1, geom = rngPoly)
+st_crs(rngPoly) <- 28355
+rngPoly <- rngPoly %>% st_transform(4283)
+par(mai = c(0.028,0.028,0.028,0.028) * 0)
+plot(Australia_GDA94_GCS$geom)
+plot(Victoria_GDA94_GCS$geom, col = "white", add = TRUE)
+polygon(c(142.2209,147.7791,147.7791,142.2209),c(-39.2040,-39.2040,-36.3960,-36.3960), col = scales::alpha(gray(0.5),0.5))
+plot(rngPoly$geom, col = "black", add = TRUE)
+title(main = "Australia", adj = 0, 
+      font.main = 1, line = -1, cex.main = 1)
+box(lwd = 2)
+bounds <- st_sfc(st_point(c(143.5,-36.5)), st_point(c(146.5,-39.1)),crs=4283)
+plot(bounds, col = "white")
+plot(Victoria_GDA94_GCS$geom, add = TRUE)
+rng_vic <- par("usr")
+plot(rngPoly$geom, col = scales::alpha(gray(0.5),0.5), add = TRUE)
+title(main = "Central Victoria ", 
+      adj = 1, font.main = 1, line = -1, cex.main = 1)
+box(lwd = 2)
+
+# B. Detail of SCMs in L4 catchment (and its subcatchments)
+siteLabels <- siteLabels[match(siteMap11$sitecode,siteLabels$sitecode),]
+siteMap11_b <- siteMap11[siteMap11$sitecode %in% c("LIS0001","LSN0001","LSS0001"),]
+siteLabels_b <- siteLabels[siteLabels$sitecode %in% c("LIS0001","LSN0001","LSS0001"),]
+label_shift_b <- matrix(c(400,-600,0,450,-1000,0), nrow = 3, byrow=TRUE)
+lab_coords <- st_coordinates(siteMap11_b) + label_shift_b
+scmMap_v2(71, addLegend = FALSE,addSCMNetwork = FALSE, ZoomToSCMs = TRUE)
+plot(catMap11$geom, lty = 3, lwd = 2,  border = catMap11$col,  add = TRUE)
+plot(siteMap11_b$geom, pch = 21, bg = siteMap11_b$col, cex = 1.25, add = TRUE)
+siteLabels_b$font[siteLabels_b$font == 1] <- 2 #make both normal and italic fonts bold
+text(lab_coords,siteLabels_b$sites_p, cex = 1, font = siteLabels$font)
+for(i in 1:3){
+  arrows(st_coordinates(siteMap11_b)[i,1] + label_shift_b[i,1], 
+         st_coordinates(siteMap11_b)[i,2] + label_shift_b[i,2], 
+         st_coordinates(siteMap11_b)[i,1],st_coordinates(siteMap11_b)[i,2],length = 0.05)
+}
+title(main = " b.", adj =  0, line = -1.5, cex.main = 2.5)
+box(lwd = 2)
+
+# C. Detail of SCMs in Dobsons
+#scmMap_v2(103, addLegend = TRUE,addSCMNetwork = FALSE, ZoomToSCMs = TRUE)
+scmMap_v2(101, addLegend = TRUE,addSCMNetwork = FALSE, ZoomToSCMs = TRUE)
+plot(catMap11$geom, lty = 3, lwd = 2,  border = catMap11$col,  add = TRUE)
+siteMap11_c <- siteMap11[siteMap11$sitecode %in% c("DBS0004","DBS0008"),]
+siteLabels_c <- siteLabels[siteLabels$sitecode %in% c("DBS0004","DBS0008"),]
+label_shift_c <-matrix(c(-300,300,0,100), nrow = 2, byrow=TRUE)
+lab_coords <- st_coordinates(siteMap11_c) + label_shift_c
+plot(siteMap11_c$geom, pch = 21, bg = siteMap11_c$col, cex = 1.25, add = TRUE)
+siteLabels_c$font[siteLabels_c$font == 1] <- 2 #make both normal and italic fonts bold
+text(lab_coords,siteLabels_c$sites_p, cex = 1, font = siteLabels$font)
+for(i in 1:2){
+  arrows(st_coordinates(siteMap11_c)[i,1] + label_shift_c[i,1], 
+         st_coordinates(siteMap11_c)[i,2] + label_shift_c[i,2], 
+         st_coordinates(siteMap11_c)[i,1],st_coordinates(siteMap11_c)[i,2],length = 0.05)
+}
+title(main = " c.", adj =  0, line = -1.5, cex.main = 2.5)
+box(lwd = 2)
+dev.off()
+```
+
+
+```{r}
+
+# ============================================================
+# FIG 1 — FULL SCRIPT (MORE ZOOM on main map)
+# Changes:
+#  - Zoom in "a fair bit" on main plotting window:
+#      * smaller padding
+#      * optional centre-crop factor (tightens further)
+#  - Keeps insets + key + arrows + axis whitespace
+# ============================================================
+
+stopifnot(requireNamespace("sf", quietly = TRUE))
+stopifnot(requireNamespace("raster", quietly = TRUE))
+
+use_ragg <- requireNamespace("ragg", quietly = TRUE)
+
+# ---------------------------------------------------
+# 0) FILTER OUT DBS0008
+# ---------------------------------------------------
+catMap11_f  <- catMap11[catMap11$sitecode != "DBS0008", ]
+siteMap11_f <- siteMap11[siteMap11$sitecode != "DBS0008", ]
+
+if (inherits(siteLabels, "sf") && "sitecode" %in% names(siteLabels)) {
+  siteLabels_f <- siteLabels[siteLabels$sitecode != "DBS0008", ]
+} else {
+  siteLabels_f <- siteLabels
+}
+
+# ---------------------------------------------------
+# 1) INSET SHAPEFILES (AUS + VIC)
+# ---------------------------------------------------
+aus_path <- "~/Documents/Git/lsc_dbs_wq_into_hydro/data/fig1_data/Inset/STE_2021_AUST_SHP_GDA2020/STE_2021_AUST_GDA2020.shp"
+vic_path <- "~/Documents/Git/lsc_dbs_wq_into_hydro/data/fig1_data/Inset/vic_state_polygon_shp/VIC_STATE_POLYGON_shp.shp"
+
+aus_ste  <- sf::st_read(path.expand(aus_path), quiet = TRUE)
+vic_poly <- sf::st_read(path.expand(vic_path), quiet = TRUE)
+
+aus_ll <- sf::st_transform(sf::st_make_valid(aus_ste), 4326)
+vic_ll <- sf::st_transform(sf::st_make_valid(vic_poly), 4326)
+
+melb_ll <- sf::st_sfc(sf::st_point(c(144.9631, -37.8136)), crs = 4326)
+
+cats_u      <- sf::st_union(sf::st_geometry(catMap11_f))
+cats_ctr    <- sf::st_centroid(cats_u)
+cats_ctr_ll <- sf::st_transform(sf::st_sfc(cats_ctr, crs = sf::st_crs(catMap11_f)), 4326)
+
+# ---------------------------------------------------
+# 2) OUTPUT DEVICE
+# ---------------------------------------------------
+out_file <- "images/Fig1_zoomed_in.tiff"
+
+if (use_ragg) {
+  ragg::agg_tiff(out_file, width = 9.2, height = 7.0, units = "in",
+                 res = 600, compression = "lzw")
+} else {
+  tiff(out_file, width = 9.2 * 600, height = 7.0 * 600, res = 600, compression = "lzw")
+}
+opar <- par(no.readonly = TRUE)
+on.exit({ par(opar); try(grDevices::dev.off(), silent = TRUE) }, add = TRUE)
+
+# ---------------------------------------------------
+# 3) STYLE
+# ---------------------------------------------------
+col_conn   <- gray(0.60)
+col_unconn <- gray(0.85)
+
+col_stream <- "dodgerblue"
+lty_stream <- 1
+lwd_stream <- 1.3
+
+catch_lty <- 3
+catch_lwd <- 1.2
+
+catch_levels <- c("Reference", "Experimental", "Control")
+catch_cols   <- c(Reference    = "#1b9e77",
+                  Experimental = "#d95f02",
+                  Control      = "#7570b3")
+
+lwd_minor  <- 0.40
+lwd_box    <- 1.2
+lwd_arrow  <- 0.90
+
+pch_site        <- 21
+col_site_border <- "black"
+pt_lwd_site     <- 1.2
+cex_pts         <- 1.70
+
+CEX_BOLD       <- 1.05
+cex_axis       <- 1.20   # tick labels
+cex_site_lab   <- 1.20
+cex_key        <- 1.05
+cex_axis_title <- 0.78   # axis titles smaller
+
+# ---------------------------------------------------
+# 4) HELPERS
+# ---------------------------------------------------
+halo_text <- function(x, y, labels, cex = 1, font = 2,
+                      col = "black", halo_col = "white", halo_mult = 0.75, ...) {
+  offs <- halo_mult * strwidth("M", cex = cex) / 10
+  for (dx in c(-offs, 0, offs)) for (dy in c(-offs, 0, offs)) {
+    if (dx != 0 || dy != 0)
+      text(x + dx, y + dy, labels, cex = cex, font = font, col = halo_col, ...)
+  }
+  text(x, y, labels, cex = cex, font = font, col = col, ...)
+}
+
+label_in_panel <- function(txt, cex = CEX_BOLD){
+  usr <- par("usr")
+  x <- usr[1] + 0.04 * (usr[2] - usr[1])
+  y <- usr[4] - 0.06 * (usr[4] - usr[3])
+  w <- strwidth(txt, cex = cex, font = 2)
+  h <- strheight("Mg", cex = cex, font = 2)
+  rect(x - 0.35*w, y - 0.55*h, x + w + 0.35*w, y + 0.25*h,
+       col = adjustcolor("white", alpha.f = 0.88), border = NA)
+  text(x, y, txt, adj = c(0,1), cex = cex, font = 2)
+}
+
+callout <- function(x, y, label, dx = 0.25, dy = 0.12, cex = 0.98){
+  usr <- par("usr")
+  tx <- x + dx * (usr[2] - usr[1])
+  ty <- y + dy * (usr[4] - usr[3])
+  tx <- min(max(tx, usr[1] + 0.05*(usr[2]-usr[1])), usr[2] - 0.05*(usr[2]-usr[1]))
+  ty <- min(max(ty, usr[3] + 0.05*(usr[4]-usr[3])), usr[4] - 0.05*(usr[4]-usr[3]))
+  arrows(tx, ty, x, y, length = 0.06, lwd = 1.0, col = "black")
+  halo_text(tx, ty, label, cex = cex, font = 2, col = "black")
+}
+
+draw_key_panel <- function(){
+  par(xpd = NA)
+  plot.new()
+  box(col = "grey60", lwd = 0.9)
+
+  usr <- par("usr")
+  text(usr[1] + 0.06*(usr[2]-usr[1]), usr[4] - 0.08*(usr[4]-usr[3]),
+       "Key", adj = c(0,1), font = 2, cex = CEX_BOLD)
+
+  legend("topleft", bty = "n", cex = cex_key,
+         inset = c(0.06, 0.14),
+         title = "Impervious areas",
+         text.font = 1, title.font = 2,
+         pch = 15, col = c(col_conn, col_unconn),
+         legend = c("Connected", "Unconnected"))
+
+  legend("topleft", bty = "n", cex = cex_key,
+         inset = c(0.06, 0.46),
+         title = "Catchments",
+         text.font = 1, title.font = 2,
+         legend = catch_levels,
+         lty = rep(catch_lty, 3),
+         lwd = rep(catch_lwd, 3),
+         col = unname(catch_cols[catch_levels]),
+         pch = rep(pch_site, 3),
+         pt.bg = unname(catch_cols[catch_levels]),
+         pt.cex = 1.25,
+         pt.lwd = pt_lwd_site)
+
+  legend("topleft", bty = "n", cex = cex_key,
+         inset = c(0.06, 0.76),
+         legend = "Streams",
+         lty = lty_stream, lwd = lwd_stream, col = col_stream)
+}
+
+draw_inset_australia <- function(){
+  aus_u <- sf::st_union(sf::st_geometry(aus_ll))
+  plot(aus_u, col = "grey92", border = "grey40",
+       axes = FALSE, xlab = "", ylab = "", asp = 1)
+  plot(sf::st_geometry(vic_ll),
+       add = TRUE,
+       col = adjustcolor("grey30", alpha.f = 0.35),
+       border = "grey20",
+       lwd = 1.0)
+  box(col = "grey60", lwd = 0.9)
+  label_in_panel("Australia", cex = CEX_BOLD)
+}
+
+draw_inset_victoria <- function(){
+  plot(sf::st_geometry(vic_ll),
+       col = "grey90", border = "grey40",
+       axes = FALSE, xlab = "", ylab = "", asp = 1)
+
+  ctr_xy  <- sf::st_coordinates(cats_ctr_ll)[1,]
+  melb_xy <- sf::st_coordinates(melb_ll)[1,]
+
+  points(ctr_xy[1],  ctr_xy[2],  pch = 21, bg = "red",    col = "black", cex = 1.12)
+  points(melb_xy[1], melb_xy[2], pch = 21, bg = "yellow", col = "black", cex = 1.18)
+
+  callout(melb_xy[1], melb_xy[2], "Melbourne",        dx = -0.28, dy =  0.10, cex = 0.98)
+  callout(ctr_xy[1],  ctr_xy[2],  "Study catchments", dx =  0.16, dy = -0.16, cex = 0.98)
+
+  box(col = "grey60", lwd = 0.9)
+  label_in_panel("Victoria", cex = CEX_BOLD)
+}
+
+# ---------------------------------------------------
+# 5) LAYOUT
+# ---------------------------------------------------
+layout(matrix(c(1,2,
+                1,3,
+                1,4),
+              nrow = 3, byrow = TRUE),
+       widths  = c(1.00, 0.40),
+       heights = c(1,1,1))
+
+# ---------------------------------------------------
+# 6) MAIN MAP EXTENTS (MORE ZOOM)
+# ---------------------------------------------------
+catIA_2009 <- catIA[
+  is.na(catIA$constructionDate) |
+    (!is.na(catIA$constructionDate) & catIA$constructionDate < "2009-10-01"),
+]
+
+bb_list <- list(
+  sf::st_bbox(sf::st_geometry(catMap11_f)),
+  sf::st_bbox(sf::st_geometry(siteMap11_f)),
+  sf::st_bbox(sf::st_geometry(streams))
+)
+if (inherits(catIA_2009, "sf") && nrow(catIA_2009) > 0) {
+  bb_list <- c(bb_list, list(sf::st_bbox(sf::st_geometry(catIA_2009))))
+}
+
+xmin <- min(vapply(bb_list, function(b) as.numeric(b["xmin"]), numeric(1)))
+xmax <- max(vapply(bb_list, function(b) as.numeric(b["xmax"]), numeric(1)))
+ymin <- min(vapply(bb_list, function(b) as.numeric(b["ymin"]), numeric(1)))
+ymax <- max(vapply(bb_list, function(b) as.numeric(b["ymax"]), numeric(1)))
+
+w <- xmax - xmin
+h <- ymax - ymin
+
+# --- stronger zoom: smaller padding than before ---
+pad_x <- 0.010 * w
+pad_y <- 0.020 * h
+
+xlim_pad <- c(xmin - pad_x, xmax + pad_x)
+ylim_pad <- c(ymin - pad_y, ymax + pad_y)
+
+# --- optional extra zoom: centre-crop factor (tighten further) ---
+# 0.90 = show 90% of width/height around centre (10% zoom-in)
+crop_factor <- 0.90
+cx <- mean(xlim_pad)
+cy <- mean(ylim_pad)
+half_w <- 0.5 * diff(xlim_pad) * crop_factor
+half_h <- 0.5 * diff(ylim_pad) * crop_factor
+xlim_pad <- c(cx - half_w, cx + half_w)
+ylim_pad <- c(cy - half_h, cy + half_h)
+
+# ---------------------------------------------------
+# 7) DRAW MAIN MAP
+# ---------------------------------------------------
+par(mar = c(5.0, 7.6, 0.9, 0.8),
+    mgp = c(2.7, 0.55, 0),
+    xaxs = "i", yaxs = "i", las = 1)
+
+plot(sf::st_geometry(catMap11_f),
+     xlim = xlim_pad, ylim = ylim_pad,
+     col = NA, border = NA, axes = FALSE)
+
+# Impervious
+if (inherits(catIA_2009, "sf") && nrow(catIA_2009) > 0) {
+  idx <- match(catIA_2009$conn, c(1, 0, 0.5))
+  idx[is.na(idx)] <- 2
+  ia_cols <- c(col_conn, col_unconn, col_unconn)[idx]
+  plot(catIA_2009$geom, col = ia_cols, border = NA, lwd = lwd_minor, add = TRUE)
+}
+
+# Streams
+plot(streams$geom, col = col_stream, lwd = lwd_stream, lty = lty_stream, add = TRUE)
+
+# Catchment boundaries
+plot(catMap11_f$geom,
+     lty = catch_lty, lwd = catch_lwd,
+     border = sf::st_drop_geometry(catMap11_f)$col,
+     add = TRUE)
+
+# Sites
+plot(siteMap11_f$geom, pch = pch_site,
+     bg = siteMap11_f$col, col = col_site_border, lwd = pt_lwd_site,
+     cex = cex_pts, add = TRUE)
+
+# Labels
+if (inherits(siteLabels_f, "sf") && nrow(siteLabels_f) > 0) {
+  siteLabels_f$font[siteLabels_f$font == 1] <- 2
+  xy_lab <- sf::st_coordinates(siteLabels_f)
+  halo_text(xy_lab[,1], xy_lab[,2], siteLabels_f$sites_p,
+            cex = cex_site_lab, font = 2)
+}
+
+# Arrows LS/LM/LN -> sites
+if (inherits(siteLabels_f, "sf") &&
+    "siteLabel" %in% names(siteLabels_f) &&
+    "sitecode"  %in% names(siteMap11_f)) {
+
+  get_xy <- function(sfobj, i) sf::st_coordinates(sfobj)[i, , drop = FALSE]
+
+  if (any(siteLabels_f$siteLabel == "LS") && any(siteMap11_f$sitecode == "LSS0001")) {
+    xy_from <- get_xy(siteLabels_f, which(siteLabels_f$siteLabel == "LS")[1])
+    xy_to   <- get_xy(siteMap11_f,  which(siteMap11_f$sitecode  == "LSS0001")[1])
+    arrows(xy_from[1,1] - 200, xy_from[1,2], xy_to[1,1], xy_to[1,2],
+           length = 0.05, lwd = lwd_arrow)
+  }
+
+  if (any(siteLabels_f$siteLabel == "LM") && any(siteMap11_f$sitecode == "LIS0001")) {
+    xy_from <- get_xy(siteLabels_f, which(siteLabels_f$siteLabel == "LM")[1])
+    xy_to   <- get_xy(siteMap11_f,  which(siteMap11_f$sitecode  == "LIS0001")[1])
+    arrows(xy_from[1,1], xy_from[1,2] + 100, xy_to[1,1], xy_to[1,2],
+           length = 0.05, lwd = lwd_arrow)
+  }
+
+  if (any(siteLabels_f$siteLabel == "LN") && any(siteMap11_f$sitecode == "LSN0001")) {
+    xy_from <- get_xy(siteLabels_f, which(siteLabels_f$siteLabel == "LN")[1])
+    xy_to   <- get_xy(siteMap11_f,  which(siteMap11_f$sitecode  == "LSN0001")[1])
+    arrows(xy_from[1,1], xy_from[1,2] - 100, xy_to[1,1], xy_to[1,2],
+           length = 0.05, lwd = lwd_arrow)
+  }
+}
+
+# Scale bar (left)
+raster::scalebar(2000,
+                 xy = c(xlim_pad[1] + 0.04 * diff(xlim_pad),
+                        ylim_pad[1] + 0.07 * diff(ylim_pad)),
+                 label = "2 km", cex = 1.05)
+
+# Frame + axes
+box(lwd = lwd_box)
+axis(1, cex.axis = cex_axis)
+axis(2, cex.axis = cex_axis)
+
+mtext("Easting (m)",  side = 1, line = 3.4, font = 2, cex = cex_axis_title)
+mtext("Northing (m)", side = 2, line = 6.2, font = 2, cex = cex_axis_title, las = 0)
+
+# ---------------------------------------------------
+# 8) RIGHT COLUMN PANELS
+# ---------------------------------------------------
+par(mar = c(0.6, 0.6, 0.6, 0.6))
+draw_inset_australia()
+
+par(mar = c(0.6, 0.6, 0.6, 0.6))
+draw_inset_victoria()
+
+par(mar = c(0.6, 0.6, 0.6, 0.6))
+draw_key_panel()
+
+# dev.off via on.exit
+
+
+
+```
+
+
