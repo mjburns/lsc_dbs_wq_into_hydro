@@ -633,53 +633,95 @@ draw_key_panel()
 
 # ============================================================
 # SCM PLOTS (2 panels) — D4-e (pipe 101) vs L4 system (pipe 71)
-# SCMs + streams (Postgres) + catchment boundaries (NO DBS0008)
+# SCMs + streams (Postgres) + pipes + catchment boundaries (NO DBS0008)
 #
-# FIXES:
-#  - streams "stopping": DO NOT spatially filter streams (no st_filter / st_intersection).
-#    Just plot full streams and let xlim/ylim clip at the plot edge.
-#  - northing label: make sure margins + label size are correct (cex.lab > cex.axis)
-#  - legend: much smaller + cleaner, right-hand column
-#  - SCMs: smaller points + optional light jitter to reduce overlap (reproducible)
+# CHANGE (this version):
+#  - Keep everything else IDENTICAL to your v6 baseline (as pasted)
+#  - Add arrows from LABEL -> SITE (same logic style as big Fig1 map)
+#  - Reduce font size of axis titles (Easting/Northing)
 # ============================================================
 
 stopifnot(requireNamespace("sf", quietly = TRUE))
 stopifnot(requireNamespace("dplyr", quietly = TRUE))
 stopifnot(requireNamespace("RPostgres", quietly = TRUE))
 
-stopifnot(exists("subcs"), exists("SCMs"), exists("catMap11"))
+stopifnot(exists("subcs"), exists("SCMs"), exists("catMap11"), exists("pipes"))
+stopifnot(exists("siteMap11"), exists("siteLabels"))
 
 use_ragg <- requireNamespace("ragg", quietly = TRUE)
 
 # ---------------------------------------------------
-# 0) STYLE
+# 0) STYLE (baseline, with smaller axis-title font)
 # ---------------------------------------------------
 # Streams
 col_stream <- "dodgerblue"
 lty_stream <- 1
-lwd_stream <- 1.3
+lwd_stream <- 1.8
+
+# Pipes (match scmMap_v2)
+col_pipe <- "#8c510a"
+lty_pipe <- 1
+lwd_pipe <- 2.0
 
 # Catchments
 catch_lty <- 3
-catch_lwd <- 1.2
+catch_lwd <- 2.4  # thicker boundary line
 
-# Axes + labels: axis titles larger than tick labels
-cex_axis <- 1.00   # tick labels
-cex_lab  <- 1.35   # axis titles (bigger than tick labels)
-mgp_main <- c(2.6, 0.70, 0)  # tick label distance etc.
+# Axes / labels
+cex_axis       <- 1.05  # tick labels
+cex_axis_title <- 1.18  # <-- reduced from 1.55
 
 # Box
-lwd_box <- 1.1
+lwd_box <- 1.2
 
 # SCMs
 scm_cols <- c(tank = "#5aae61", rg = "blue", dd = "#fdae61")
 scm_pch  <- c(tank = 19,       rg = 19,     dd = 19)
-scm_cex  <- 0.70      # smaller points
-scm_jitter_m <- 10    # jitter in metres (set 0 to turn off)
+scm_cex  <- 0.62      # smaller points
+scm_jitter_m <- 10    # metres (set 0 to disable)
 scm_jitter_seed <- 71 # reproducible
 
+# Panel padding (catchment-driven)
+PAD_FRAC_X <- 0.22
+PAD_FRAC_Y <- 0.22
+
+# --- Site + label style (MATCH big map) ---
+pch_site        <- 21
+col_site_border <- "black"
+pt_lwd_site     <- 1.2
+cex_pts         <- 1.70
+
+cex_site_lab <- 1.20
+
+# Arrows (match big-map feel)
+lwd_arrow <- 0.90
+
 # ---------------------------------------------------
-# 1) Upstream pipes helper (no allupstream dependency)
+# 1) HELPERS (same as big map for labels)
+# ---------------------------------------------------
+halo_text <- function(x, y, labels, cex = 1, font = 2,
+                      col = "black", halo_col = "white", halo_mult = 0.75, ...) {
+  offs <- halo_mult * strwidth("M", cex = cex) / 10
+  for (dx in c(-offs, 0, offs)) for (dy in c(-offs, 0, offs)) {
+    if (dx != 0 || dy != 0)
+      text(x + dx, y + dy, labels, cex = cex, font = font, col = halo_col, ...)
+  }
+  text(x, y, labels, cex = cex, font = font, col = col, ...)
+}
+
+# Arrow from label (from) -> site (to), with gentle offset so the arrow doesn't start inside text
+arrow_label_to_site <- function(x_from, y_from, x_to, y_to, lwd = 1, length = 0.05, col = "black"){
+  usr <- par("usr")
+  dx <- usr[2] - usr[1]
+  dy <- usr[4] - usr[3]
+  # small step away from label point
+  x0 <- x_from + 0.010 * dx * sign(x_to - x_from)
+  y0 <- y_from + 0.010 * dy * sign(y_to - y_from)
+  arrows(x0, y0, x_to, y_to, length = length, lwd = lwd, col = col)
+}
+
+# ---------------------------------------------------
+# 2) Upstream pipes helper (no allupstream dependency)
 # ---------------------------------------------------
 get_upstream_pipes <- function(subcs_df,
                                outlet_pipeID,
@@ -717,37 +759,48 @@ subcs_df <- as.data.frame(subcs)
 pipe_D4e <- 101
 pipe_L4  <- 71
 
-pipes_D4e <- get_upstream_pipes(subcs_df, pipe_D4e)
-pipes_L4  <- get_upstream_pipes(subcs_df, pipe_L4)
+pipes_D4e_ids <- get_upstream_pipes(subcs_df, pipe_D4e)
+pipes_L4_ids  <- get_upstream_pipes(subcs_df, pipe_L4)
 
-SCMs_D4e <- SCMs[SCMs$pipeID %in% pipes_D4e, ]
-SCMs_L4  <- SCMs[SCMs$pipeID %in% pipes_L4,  ]
+SCMs_D4e <- SCMs[SCMs$pipeID %in% pipes_D4e_ids, ]
+SCMs_L4  <- SCMs[SCMs$pipeID %in% pipes_L4_ids,  ]
 
 # ---------------------------------------------------
-# 2) Catchment boundaries
-#    D4-e: ONLY DBS0004 (remove DBS0008)
+# 3) Catchment boundaries
 # ---------------------------------------------------
 cat_D4e <- catMap11[catMap11$sitecode %in% c("DBS0004"), ]
 cat_L4  <- catMap11[catMap11$sitecode %in% c("LIS0004", "LIS0001", "LSN0001", "LSS0001"), ]
 
 # ---------------------------------------------------
-# 3) CRS sanity: make EVERYTHING share a CRS
+# 4) CRS sanity: make EVERYTHING share a CRS
 # ---------------------------------------------------
-crs_scms <- sf::st_crs(SCMs)
-
-if (is.na(crs_scms) && !is.na(sf::st_crs(catMap11))) {
-  sf::st_crs(SCMs)     <- sf::st_crs(catMap11)
-  sf::st_crs(SCMs_D4e) <- sf::st_crs(catMap11)
-  sf::st_crs(SCMs_L4)  <- sf::st_crs(catMap11)
-  crs_scms <- sf::st_crs(SCMs)
+crs_main <- sf::st_crs(SCMs)
+if (is.na(crs_main) && !is.na(sf::st_crs(catMap11))) {
+  sf::st_crs(SCMs) <- sf::st_crs(catMap11)
+  crs_main <- sf::st_crs(SCMs)
 }
-stopifnot(!is.na(crs_scms))
+stopifnot(!is.na(crs_main))
 
-if (!is.na(sf::st_crs(cat_D4e)) && sf::st_crs(cat_D4e) != crs_scms) cat_D4e <- sf::st_transform(cat_D4e, crs_scms)
-if (!is.na(sf::st_crs(cat_L4))  && sf::st_crs(cat_L4)  != crs_scms) cat_L4  <- sf::st_transform(cat_L4,  crs_scms)
+to_crs <- function(x){
+  if (inherits(x, "sf") && !is.na(sf::st_crs(x)) && sf::st_crs(x) != crs_main) {
+    return(sf::st_transform(x, crs_main))
+  }
+  if (inherits(x, "sf") && is.na(sf::st_crs(x))) {
+    sf::st_crs(x) <- crs_main
+  }
+  x
+}
+
+cat_D4e     <- to_crs(cat_D4e)
+cat_L4      <- to_crs(cat_L4)
+SCMs_D4e    <- to_crs(SCMs_D4e)
+SCMs_L4     <- to_crs(SCMs_L4)
+pipes       <- to_crs(pipes)
+siteMap11   <- to_crs(siteMap11)
+siteLabels  <- to_crs(siteLabels)
 
 # ---------------------------------------------------
-# 4) Load streams from Postgres (Fig1 philosophy)
+# 5) Load streams from Postgres
 # ---------------------------------------------------
 db_m <- RPostgres::dbConnect(
   RPostgres::Postgres(),
@@ -760,17 +813,63 @@ db_m <- RPostgres::dbConnect(
 on.exit(try(RPostgres::dbDisconnect(db_m), silent = TRUE), add = TRUE)
 
 streams <- sf::st_read(db_m, query = "SELECT * FROM streams;", quiet = TRUE)
+streams <- to_crs(streams)
 
-if (!is.na(sf::st_crs(streams)) && sf::st_crs(streams) != crs_scms) {
-  streams <- sf::st_transform(streams, crs_scms)
+# ---------------------------------------------------
+# 6) Pipe subsetting that actually works (robust)
+# ---------------------------------------------------
+subset_pipes_for <- function(pipes_sf, ids, subcs_df){
+  if (!inherits(pipes_sf, "sf") || nrow(pipes_sf) == 0) return(pipes_sf)
+
+  ids <- as.numeric(ids)
+  out <- pipes_sf[0, ]
+
+  if ("pipeID" %in% names(pipes_sf)) {
+    out <- pipes_sf[pipes_sf$pipeID %in% ids, ]
+  }
+
+  if (nrow(out) == 0 && "pipeName" %in% names(pipes_sf) && "pipeName" %in% names(subcs_df)) {
+    nm <- unique(subcs_df$pipeName[subcs_df$pipeID %in% ids])
+    nm <- nm[!is.na(nm)]
+    if (length(nm) > 0) out <- pipes_sf[pipes_sf$pipeName %in% nm, ]
+  }
+
+  if (nrow(out) == 0) out <- pipes_sf
+  out
 }
 
-# ---------------------------------------------------
-# 5) Panel extents: catchment-driven + MORE padding (helps streams not clip too tight)
-# ---------------------------------------------------
-PAD_FRAC_X <- 0.18
-PAD_FRAC_Y <- 0.18
+pipes_D4e <- subset_pipes_for(pipes, pipes_D4e_ids, subcs_df)
+pipes_L4  <- subset_pipes_for(pipes, pipes_L4_ids,  subcs_df)
 
+# ---------------------------------------------------
+# 6.5) Clip pipes to DBS0004 polygon ONLY (spatial)
+# ---------------------------------------------------
+clip_lines_to_polygon <- function(lines_sf, poly_sf){
+  if (!inherits(lines_sf, "sf") || nrow(lines_sf) == 0) return(lines_sf)
+  if (!inherits(poly_sf, "sf")  || nrow(poly_sf)  == 0) return(lines_sf)
+
+  lines_sf <- sf::st_make_valid(lines_sf)
+  poly_sf  <- sf::st_make_valid(poly_sf)
+
+  mask <- sf::st_union(sf::st_geometry(poly_sf))
+  clipped <- suppressWarnings(sf::st_intersection(lines_sf, mask))
+
+  if (!inherits(clipped, "sf") || nrow(clipped) == 0) {
+    return(lines_sf[0, ])
+  }
+
+  gtype <- as.character(sf::st_geometry_type(clipped, by_geometry = TRUE))
+  keep <- gtype %in% c("LINESTRING", "MULTILINESTRING")
+  clipped <- clipped[keep, ]
+
+  clipped
+}
+
+pipes_D4e <- clip_lines_to_polygon(pipes_D4e, cat_D4e)
+
+# ---------------------------------------------------
+# 7) Panel extents: catchment-driven + padding
+# ---------------------------------------------------
 get_extent <- function(sfobj){
   bb <- sf::st_bbox(sf::st_geometry(sfobj))
   xmin <- as.numeric(bb["xmin"]); xmax <- as.numeric(bb["xmax"])
@@ -787,21 +886,10 @@ ext_D4e <- if (inherits(cat_D4e, "sf") && nrow(cat_D4e) > 0) get_extent(cat_D4e)
 ext_L4  <- if (inherits(cat_L4,  "sf") && nrow(cat_L4)  > 0) get_extent(cat_L4)  else get_extent(SCMs_L4)
 
 # ---------------------------------------------------
-# 6) SCM plotting helper: plot POINTS with small jitter (optional)
+# 8) SCM plotting helper (points with small jitter)
 # ---------------------------------------------------
 plot_scms_jittered <- function(scms_sf, cex = 1, jitter_m = 0, seed = 1){
   if (!inherits(scms_sf, "sf") || nrow(scms_sf) == 0) return(invisible())
-
-  gtype <- unique(as.character(sf::st_geometry_type(scms_sf)))
-  # handle POINT/MULTIPOINT cleanly
-  if (!any(gtype %in% c("POINT", "MULTIPOINT"))) {
-    # fallback: plot as-is
-    t <- as.character(scms_sf$type)
-    cols <- scm_cols[t]; cols[is.na(cols)] <- "black"
-    pchs <- scm_pch[t];  pchs[is.na(pchs)] <- 19
-    plot(scms_sf$geom, add = TRUE, pch = pchs, col = cols, cex = cex)
-    return(invisible())
-  }
 
   xy <- sf::st_coordinates(scms_sf)
 
@@ -819,65 +907,64 @@ plot_scms_jittered <- function(scms_sf, cex = 1, jitter_m = 0, seed = 1){
 }
 
 # ---------------------------------------------------
-# 7) Export device (high-res TIFF)
+# 9) Export device (high-res TIFF)
 # ---------------------------------------------------
 dir.create("images", showWarnings = FALSE, recursive = TRUE)
-out_file <- "images/SCM_D4e_vs_L4_streams_catchments_LEGEND_RIGHT_v2.tiff"
+out_file <- "images/SCM_D4e_vs_L4_streams_pipes_catchments_sites_labels_arrows_LEGEND_RIGHT_v7.tiff"
+
+W_IN <- 14.0
+H_IN <- 7.2
+DPI  <- 600
 
 if (use_ragg) {
-  ragg::agg_tiff(out_file,
-                 width = 12.0, height = 6.0, units = "in",
-                 res = 600, compression = "lzw")
+  ragg::agg_tiff(out_file, width = W_IN, height = H_IN, units = "in",
+                 res = DPI, compression = "lzw")
 } else {
-  tiff(out_file,
-       width = 12.0, height = 6.0, units = "in",
-       res = 600, compression = "lzw")
+  tiff(out_file, width = W_IN, height = H_IN, units = "in",
+       res = DPI, compression = "lzw")
 }
 
 opar <- par(no.readonly = TRUE)
 on.exit({ par(opar); try(grDevices::dev.off(), silent = TRUE) }, add = TRUE)
 
-# Layout: two maps + slimmer right legend column
+# Layout: two maps + slim right legend column
 layout(matrix(c(1,2,3), nrow = 1, byrow = TRUE),
-       widths = c(1.0, 1.0, 0.26))
+       widths = c(1.0, 1.0, 0.20))
 
 # ---------------------------------------------------
-# 8) Panel plotter
-#     Note order:
-#       base (catchments invisible) -> streams -> catchment boundaries -> SCMs
+# 10) Panel plotter (baseline + arrows label->site)
 # ---------------------------------------------------
-plot_panel <- function(title_txt, ext, streams_sf, cats_sf, scms_sf){
+plot_panel <- function(title_txt, ext, streams_sf, pipes_sf, cats_sf, scms_sf,
+                       sitecodes_keep){
 
-  # Larger left margin so Northing title is visible and not on top of ticks
-  par(mar = c(5.2, 7.2, 2.2, 1.0),
-      mgp = mgp_main,
+  par(mar = c(5.0, 8.6, 2.4, 1.0),
+      mgp = c(2.7, 0.55, 0),
       xaxs = "i", yaxs = "i", las = 1)
 
-  # Base plot: use catchments to lock projection and axes
   if (inherits(cats_sf, "sf") && nrow(cats_sf) > 0) {
     plot(sf::st_geometry(cats_sf),
          xlim = ext$xlim, ylim = ext$ylim,
          col = NA, border = NA,
-         axes = TRUE, asp = 1,
-         xlab = "Easting (m)", ylab = "Northing (m)",
-         cex.axis = cex_axis, cex.lab = cex_lab)
+         axes = FALSE, asp = 1,
+         xlab = "", ylab = "")
   } else {
     plot(NA, NA, type = "n",
          xlim = ext$xlim, ylim = ext$ylim,
-         axes = TRUE, asp = 1,
-         xlab = "Easting (m)", ylab = "Northing (m)",
-         cex.axis = cex_axis, cex.lab = cex_lab)
+         axes = FALSE, asp = 1,
+         xlab = "", ylab = "")
   }
 
-  title(main = title_txt, adj = 0, line = 0.6, font.main = 2)
-
-  # Streams (NO filtering; window clips at plot edge)
+  # Layers
   if (inherits(streams_sf, "sf") && nrow(streams_sf) > 0) {
     plot(sf::st_geometry(streams_sf),
          col = col_stream, lwd = lwd_stream, lty = lty_stream, add = TRUE)
   }
 
-  # Catchment boundaries on top so they read clearly
+  if (inherits(pipes_sf, "sf") && nrow(pipes_sf) > 0) {
+    plot(sf::st_geometry(pipes_sf),
+         col = col_pipe, lwd = lwd_pipe, lty = lty_pipe, add = TRUE)
+  }
+
   if (inherits(cats_sf, "sf") && nrow(cats_sf) > 0) {
     plot(cats_sf$geom,
          lty = catch_lty, lwd = catch_lwd,
@@ -885,42 +972,125 @@ plot_panel <- function(title_txt, ext, streams_sf, cats_sf, scms_sf){
          add = TRUE)
   }
 
-  # SCMs: smaller + light jitter to reduce overlap
-  plot_scms_jittered(scms_sf, cex = scm_cex,
-                     jitter_m = scm_jitter_m,
-                     seed = scm_jitter_seed)
+  plot_scms_jittered(scms_sf, cex = scm_cex, jitter_m = scm_jitter_m, seed = scm_jitter_seed)
 
+  # ---- SITES + LABELS (added late; Fig1 style) ----
+  sites_i <- siteMap11[siteMap11$sitecode %in% sitecodes_keep, ]
+  labs_i  <- siteLabels[siteLabels$sitecode %in% sitecodes_keep, ]
+
+  # Sites
+  if (inherits(sites_i, "sf") && nrow(sites_i) > 0) {
+    plot(sites_i$geom, pch = pch_site,
+         bg = sites_i$col, col = col_site_border, lwd = pt_lwd_site,
+         cex = cex_pts, add = TRUE)
+  }
+
+  # Labels + arrows label->site
+  if (inherits(labs_i, "sf") && nrow(labs_i) > 0) {
+    if ("font" %in% names(labs_i)) labs_i$font[labs_i$font == 1] <- 2
+
+    xy_lab  <- sf::st_coordinates(labs_i)
+
+    # choose label column robustly
+    if ("sites_p" %in% names(labs_i)) {
+      lab_txt <- labs_i$sites_p
+    } else if ("siteLabel" %in% names(labs_i)) {
+      lab_txt <- labs_i$siteLabel
+    } else if ("sitecode" %in% names(labs_i)) {
+      lab_txt <- labs_i$sitecode
+    } else {
+      lab_txt <- rep("", nrow(labs_i))
+    }
+
+    # Draw label text
+    halo_text(xy_lab[,1], xy_lab[,2], lab_txt,
+              cex = cex_site_lab, font = 2)
+
+    # Arrows: match by sitecode, label -> site centroid
+    if (inherits(sites_i, "sf") && nrow(sites_i) > 0 && "sitecode" %in% names(labs_i) && "sitecode" %in% names(sites_i)) {
+      # use centroid of the point geometry (safe even if it's a POINT already)
+      site_xy <- sf::st_coordinates(sites_i)
+
+      # for each label row, find corresponding site row
+      for (k in seq_len(nrow(labs_i))) {
+        sc <- as.character(labs_i$sitecode[k])
+        j  <- which(as.character(sites_i$sitecode) == sc)[1]
+        if (length(j) == 0 || is.na(j)) next
+
+        arrow_label_to_site(
+          x_from = xy_lab[k,1], y_from = xy_lab[k,2],
+          x_to   = site_xy[j,1], y_to   = site_xy[j,2],
+          lwd = lwd_arrow, length = 0.05, col = "black"
+        )
+      }
+    }
+  }
+
+  # Frame + axes
   box(lwd = lwd_box)
+  axis(1, cex.axis = cex_axis)
+  axis(2, cex.axis = cex_axis)
+
+  # Axis titles EXACTLY as requested (but smaller cex now)
+  mtext("Easting (m)",  side = 1, line = 3.4, font = 2, cex = cex_axis_title)
+  mtext("Northing (m)", side = 2, line = 6.2, font = 2, cex = cex_axis_title, las = 0)
+
+  title(main = title_txt, adj = 0, line = 0.8, font.main = 2)
 }
 
-plot_panel("D4-e (pipe 101)", ext_D4e, streams, cat_D4e, SCMs_D4e)
-plot_panel("L4 system (pipe 71)", ext_L4,  streams, cat_L4,  SCMs_L4)
+# Sitecodes per panel
+sites_D4e <- c("DBS0004")
+sites_L4  <- c("LSS0001", "LIS0001", "LSN0001", "LIS0004")
+
+plot_panel("D4-e (pipe 101)",     ext_D4e, streams, pipes_D4e, cat_D4e, SCMs_D4e, sites_D4e)
+plot_panel("L4 system (pipe 71)", ext_L4,  streams, pipes_L4,  cat_L4,  SCMs_L4,  sites_L4)
 
 # ---------------------------------------------------
-# 9) Right-hand legend panel (smaller + clean)
+# 11) Compact right-hand legend (unchanged)
 # ---------------------------------------------------
-par(mar = c(0.8, 0.8, 0.8, 0.8))
+par(mar = c(0.8, 0.6, 0.8, 0.6))
 plot.new()
 box(col = "grey60", lwd = 0.9)
 
 usr <- par("usr")
-text(usr[1] + 0.08*(usr[2]-usr[1]), usr[4] - 0.08*(usr[4]-usr[3]),
+
+text(usr[1] + 0.08*(usr[2]-usr[1]), usr[4] - 0.06*(usr[4]-usr[3]),
      "Legend", adj = c(0,1), font = 2, cex = 0.95)
 
-legend("topleft", bty = "n", inset = c(0.06, 0.18),
-       cex = 0.82,
-       pch = c(scm_pch["tank"], scm_pch["rg"], scm_pch["dd"]),
-       col = c(scm_cols["tank"], scm_cols["rg"], scm_cols["dd"]),
-       pt.cex = 0.85,
-       legend = c("Tank", "Raingarden", "Downpipe diverter"),
-       title = "SCMs", title.font = 2, x.intersp = 0.7, y.intersp = 0.9)
+x0 <- usr[1] + 0.10*(usr[2]-usr[1])
+y0 <- usr[4] - 0.18*(usr[4]-usr[3])
+dy <- 0.11*(usr[4]-usr[3])
 
-legend("topleft", bty = "n", inset = c(0.06, 0.63),
-       cex = 0.82,
-       lty = lty_stream, lwd = lwd_stream, col = col_stream,
-       legend = "Streams", x.intersp = 0.7, y.intersp = 0.9)
+text(x0, y0, "SCMs", adj = c(0,1), font = 2, cex = 0.85)
+
+y <- y0 - 0.90*dy
+points(x0, y, pch = 19, col = scm_cols["tank"], cex = 0.85)
+text(x0 + 0.12*(usr[2]-usr[1]), y, "Tank", adj = c(0,0.5), cex = 0.82)
+
+y <- y - dy
+points(x0, y, pch = 19, col = scm_cols["rg"], cex = 0.85)
+text(x0 + 0.12*(usr[2]-usr[1]), y, "Raingarden", adj = c(0,0.5), cex = 0.82)
+
+y <- y - dy
+points(x0, y, pch = 19, col = scm_cols["dd"], cex = 0.85)
+text(x0 + 0.12*(usr[2]-usr[1]), y, "Downpipe diverter", adj = c(0,0.5), cex = 0.82)
+
+y <- y - 1.25*dy
+text(x0, y, "Network", adj = c(0,1), font = 2, cex = 0.85)
+
+y <- y - 0.95*dy
+segments(x0, y, x0 + 0.16*(usr[2]-usr[1]), y, col = col_stream, lwd = lwd_stream, lty = lty_stream)
+text(x0 + 0.22*(usr[2]-usr[1]), y, "Streams", adj = c(0,0.5), cex = 0.82)
+
+y <- y - dy
+segments(x0, y, x0 + 0.16*(usr[2]-usr[1]), y, col = col_pipe, lwd = lwd_pipe, lty = lty_pipe)
+text(x0 + 0.22*(usr[2]-usr[1]), y, "Stormwater pipes", adj = c(0,0.5), cex = 0.82)
 
 # dev.off via on.exit
+
+
+
+
 
 
 
