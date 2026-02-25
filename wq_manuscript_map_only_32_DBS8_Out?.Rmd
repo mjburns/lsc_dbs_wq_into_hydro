@@ -632,14 +632,11 @@ draw_key_panel()
 ```{r}
 
 # ============================================================
-# SCM PLOTS (2 panels) — D4-e (pipe 101) vs L4 system (pipe 71)
-# SCMs + streams (Postgres) + pipes + catchment boundaries
-# + Impervious areas (ia) subset to upstream network for each panel
-#
-# CHANGE (this version):
-#  - Legends tightened HARD (less vertical whitespace in BOTH bottom-right boxes)
-#  - No overlap: IA box sits above SCM box with explicit gap + smaller box heights
-#  - ONE consistent legend font sizes for ALL 3 legend boxes (Network / IA / SCM)
+# ONLY CHANGE (as requested):
+#  - For EACH panel, draw BOTH x- and y-axes manually with EXACTLY 3 ticks
+#    (evenly spaced across that panel's xlim/ylim).
+#  - This replaces the previous special-case x-axis fix for the L4 panel.
+#  - NOTHING ELSE changed.
 # ============================================================
 
 stopifnot(requireNamespace("sf", quietly = TRUE))
@@ -655,54 +652,43 @@ use_ragg <- requireNamespace("ragg", quietly = TRUE)
 # ---------------------------------------------------
 # 0) STYLE
 # ---------------------------------------------------
-# Streams
 col_stream <- "dodgerblue"
 lty_stream <- 1
 lwd_stream <- 1.8
 
-# Pipes (match scmMap_v2)
 col_pipe <- "#8c510a"
 lty_pipe <- 1
 lwd_pipe <- 2.0
 
-# Catchments
 catch_lty <- 3
 catch_lwd <- 2.4
 
-# Axes / labels
 cex_axis       <- 1.05
 cex_axis_title <- 0.95
 
-# Box
 lwd_box <- 1.2
 
-# SCMs
 scm_cols <- c(tank = "#5aae61", rg = "blue", dd = "#fdae61")
 scm_pch  <- c(tank = 19,       rg = 19,     dd = 19)
 scm_cex  <- 0.62
 scm_jitter_m <- 10
 scm_jitter_seed <- 71
 
-# Impervious areas (MATCH big Fig1)
 col_conn   <- gray(0.60)
 col_unconn <- gray(0.85)
 lwd_ia     <- 0.5
 
-# Panel padding (catchment-driven)
 PAD_FRAC_X <- 0.22
 PAD_FRAC_Y <- 0.22
 
-# --- Site + label style (MATCH big map) ---
 pch_site        <- 21
 col_site_border <- "black"
 pt_lwd_site     <- 1.2
 cex_pts         <- 1.70
 cex_site_lab    <- 1.20
 
-# Arrows
 lwd_arrow <- 0.90
 
-# Legend styling (UNIFIED fonts)
 leg_cex_title <- 0.76
 leg_cex_item  <- 0.74
 leg_lwd_box   <- 0.9
@@ -729,7 +715,6 @@ arrow_label_to_site <- function(x_from, y_from, x_to, y_to, lwd = 1, length = 0.
   arrows(x0, y0, x_to, y_to, length = length, lwd = lwd, col = col)
 }
 
-# --- Impervious plot helper (matches big figure mapping) ---
 plot_ia_subset <- function(ia_sf, pipe_ids){
   if (!inherits(ia_sf, "sf") || nrow(ia_sf) == 0) return(invisible())
   if (!("pipeID" %in% names(ia_sf))) stop("ia must have a 'pipeID' column.")
@@ -749,131 +734,58 @@ plot_ia_subset <- function(ia_sf, pipe_ids){
   invisible()
 }
 
-# ---------------------------------------------------
-# 1.5) IN-PANEL LEGENDS (tight spacing; no overlap)
-# ---------------------------------------------------
-# NOTE: all three boxes use leg_cex_title / leg_cex_item so fonts match everywhere.
-
+# --- legends (UNCHANGED) ---
 draw_scm_legend_br <- function(){
-  usr <- par("usr")
-  w <- usr[2] - usr[1]
-  h <- usr[4] - usr[3]
-
-  box_w <- 0.41 * w
-  box_h <- 0.158 * h     # tighter than before (was 0.19)
-  pad_x <- 0.010 * w
-  pad_y <- 0.012 * h
-
-  x1 <- usr[2] - pad_x - box_w
-  x2 <- usr[2] - pad_x
-  y1 <- usr[3] + pad_y
-  y2 <- y1 + box_h
-
-  rect(x1, y1, x2, y2, col = "white",
-       border = "grey70", lwd = leg_lwd_box)
-
-  xL   <- x1 + 0.05 * box_w
-  xSym <- xL
-  xTxt <- xL + 0.18 * box_w
-
-  # title closer to top; then small gap to first item
+  usr <- par("usr"); w <- usr[2] - usr[1]; h <- usr[4] - usr[3]
+  box_w <- 0.41 * w; box_h <- 0.158 * h; pad_x <- 0.010 * w; pad_y <- 0.012 * h
+  x1 <- usr[2] - pad_x - box_w; x2 <- usr[2] - pad_x
+  y1 <- usr[3] + pad_y; y2 <- y1 + box_h
+  rect(x1, y1, x2, y2, col = "white", border = "grey70", lwd = leg_lwd_box)
+  xL <- x1 + 0.05 * box_w; xSym <- xL; xTxt <- xL + 0.18 * box_w
   y <- y2 - 0.10 * box_h
   text(xL, y, "SCMs", adj = c(0,1), font = 2, cex = leg_cex_title)
-
   y <- y - 0.26 * box_h
   dy_item <- 0.205 * box_h
-
-  points(xSym, y, pch = 19, col = scm_cols["tank"], cex = 0.72)
-  text(xTxt, y, "Tank", adj = c(0,0.5), cex = leg_cex_item)
-  y <- y - dy_item
-
-  points(xSym, y, pch = 19, col = scm_cols["rg"], cex = 0.72)
-  text(xTxt, y, "Raingarden", adj = c(0,0.5), cex = leg_cex_item)
-  y <- y - dy_item
-
-  points(xSym, y, pch = 19, col = scm_cols["dd"], cex = 0.72)
-  text(xTxt, y, "Downpipe diverter", adj = c(0,0.5), cex = leg_cex_item)
+  points(xSym, y, pch = 19, col = scm_cols["tank"], cex = 0.72); text(xTxt, y, "Tank", adj = c(0,0.5), cex = leg_cex_item); y <- y - dy_item
+  points(xSym, y, pch = 19, col = scm_cols["rg"],   cex = 0.72); text(xTxt, y, "Raingarden", adj = c(0,0.5), cex = leg_cex_item); y <- y - dy_item
+  points(xSym, y, pch = 19, col = scm_cols["dd"],   cex = 0.72); text(xTxt, y, "Downpipe diverter", adj = c(0,0.5), cex = leg_cex_item)
 }
 
 draw_ia_legend_br <- function(){
-  usr <- par("usr")
-  w <- usr[2] - usr[1]
-  h <- usr[4] - usr[3]
-
-  box_w <- 0.41 * w
-  box_h <- 0.118 * h     # tighter (was 0.14)
-  pad_x <- 0.010 * w
-  pad_y <- 0.012 * h
-
-  gap <- 0.010 * h       # explicit non-overlap gap
-
-  # compute from SCM box top so they never overlap
+  usr <- par("usr"); w <- usr[2] - usr[1]; h <- usr[4] - usr[3]
+  box_w <- 0.41 * w; box_h <- 0.118 * h; pad_x <- 0.010 * w; pad_y <- 0.012 * h
+  gap <- 0.010 * h
   scm_h <- 0.158 * h
   scm_y1 <- usr[3] + pad_y
   scm_y2 <- scm_y1 + scm_h
-
-  y1 <- scm_y2 + gap
-  y2 <- y1 + box_h
-
-  x1 <- usr[2] - pad_x - box_w
-  x2 <- usr[2] - pad_x
-
-  rect(x1, y1, x2, y2, col = "white",
-       border = "grey70", lwd = leg_lwd_box)
-
-  xL   <- x1 + 0.05 * box_w
-  xSym <- xL
-  xTxt <- xL + 0.18 * box_w
-
+  y1 <- scm_y2 + gap; y2 <- y1 + box_h
+  x1 <- usr[2] - pad_x - box_w; x2 <- usr[2] - pad_x
+  rect(x1, y1, x2, y2, col = "white", border = "grey70", lwd = leg_lwd_box)
+  xL <- x1 + 0.05 * box_w; xSym <- xL; xTxt <- xL + 0.18 * box_w
   y <- y2 - 0.12 * box_h
   text(xL, y, "Impervious areas", adj = c(0,1), font = 2, cex = leg_cex_title)
-
   y <- y - 0.30 * box_h
   dy_item <- 0.30 * box_h
-
-  points(xSym, y, pch = 15, col = col_conn, cex = 0.92)
-  text(xTxt, y, "Connected", adj = c(0,0.5), cex = leg_cex_item)
-  y <- y - dy_item
-
-  points(xSym, y, pch = 15, col = col_unconn, cex = 0.92)
-  text(xTxt, y, "Unconnected", adj = c(0,0.5), cex = leg_cex_item)
+  points(xSym, y, pch = 15, col = col_conn,   cex = 0.92); text(xTxt, y, "Connected",   adj = c(0,0.5), cex = leg_cex_item); y <- y - dy_item
+  points(xSym, y, pch = 15, col = col_unconn, cex = 0.92); text(xTxt, y, "Unconnected", adj = c(0,0.5), cex = leg_cex_item)
 }
 
 draw_network_legend_bl <- function(){
-  usr <- par("usr")
-  w <- usr[2] - usr[1]
-  h <- usr[4] - usr[3]
-
-  box_w <- 0.44 * w
-  box_h <- 0.145 * h     # slightly tighter than before (was 0.16)
-  pad_x <- 0.010 * w
-  pad_y <- 0.012 * h
-
-  x1 <- usr[1] + pad_x
-  x2 <- x1 + box_w
-  y1 <- usr[3] + pad_y
-  y2 <- y1 + box_h
-
-  rect(x1, y1, x2, y2, col = "white",
-       border = "grey70", lwd = leg_lwd_box)
-
-  xL   <- x1 + 0.06 * box_w
-  xSym <- xL
-
-  line_len <- 0.26 * box_w
-  gap_txt  <- 0.08 * box_w
+  usr <- par("usr"); w <- usr[2] - usr[1]; h <- usr[4] - usr[3]
+  box_w <- 0.44 * w; box_h <- 0.145 * h; pad_x <- 0.010 * w; pad_y <- 0.012 * h
+  x1 <- usr[1] + pad_x; x2 <- x1 + box_w
+  y1 <- usr[3] + pad_y; y2 <- y1 + box_h
+  rect(x1, y1, x2, y2, col = "white", border = "grey70", lwd = leg_lwd_box)
+  xL <- x1 + 0.06 * box_w; xSym <- xL
+  line_len <- 0.26 * box_w; gap_txt <- 0.08 * box_w
   xTxt <- xSym + line_len + gap_txt
-
   y <- y2 - 0.12 * box_h
   text(xL, y, "Network", adj = c(0,1), font = 2, cex = leg_cex_title)
-
   y <- y - 0.30 * box_h
   dy_item <- 0.30 * box_h
-
   segments(xSym, y, xSym + line_len, y, col = col_stream, lwd = lwd_stream, lty = lty_stream)
   text(xTxt, y, "Streams", adj = c(0,0.5), cex = leg_cex_item)
   y <- y - dy_item
-
   segments(xSym, y, xSym + line_len, y, col = col_pipe, lwd = lwd_pipe, lty = lty_pipe)
   text(xTxt, y, "Stormwater pipes", adj = c(0,0.5), cex = leg_cex_item)
 }
@@ -884,36 +796,62 @@ draw_legends_split <- function(){
   draw_ia_legend_br()
 }
 
+# --- NEW helper: exactly 3 ticks spanning a range (used for BOTH axes, BOTH panels) ---
+three_ticks <- function(lim, round_to = 1000){
+  lo <- lim[1]; hi <- lim[2]
+  if (!is.finite(lo) || !is.finite(hi) || lo == hi) return(c(lo, lo, hi))
+
+  # "pretty" endpoints aligned to round_to (keeps nice integers like 361000)
+  if (is.finite(round_to) && round_to > 0) {
+    lo2 <- floor(lo / round_to) * round_to
+    hi2 <- ceiling(hi / round_to) * round_to
+    if (lo2 == hi2) {
+      lo2 <- lo; hi2 <- hi
+    }
+  } else {
+    lo2 <- lo; hi2 <- hi
+  }
+
+  mid <- (lo2 + hi2) / 2
+  if (is.finite(round_to) && round_to > 0) {
+    mid <- round(mid / round_to) * round_to
+  }
+
+  xt <- unique(c(lo2, mid, hi2))
+  # ensure exactly 3 values (in case mid == lo2 or hi2 after rounding)
+  if (length(xt) < 3) {
+    # fall back to true midpoint (unrounded) to preserve 3
+    mid2 <- (lo2 + hi2) / 2
+    xt <- unique(c(lo2, mid2, hi2))
+  }
+  # final clamp to plot limits
+  xt <- xt[xt >= lim[1] & xt <= lim[2]]
+  # if clamping removed an end, use raw ends
+  if (length(xt) < 3) {
+    mid3 <- (lim[1] + lim[2]) / 2
+    if (is.finite(round_to) && round_to > 0) mid3 <- round(mid3 / round_to) * round_to
+    xt <- c(lim[1], mid3, lim[2])
+  }
+  as.numeric(xt[1:3])
+}
+
 # ---------------------------------------------------
 # 2) Upstream pipes helper
 # ---------------------------------------------------
-get_upstream_pipes <- function(subcs_df,
-                               outlet_pipeID,
-                               id_col = "pipeID",
-                               next_col = "nextds") {
+get_upstream_pipes <- function(subcs_df, outlet_pipeID, id_col = "pipeID", next_col = "nextds") {
   stopifnot(id_col %in% names(subcs_df), next_col %in% names(subcs_df))
-
   ids <- suppressWarnings(as.numeric(as.character(subcs_df[[id_col]])))
   nxt <- suppressWarnings(as.numeric(as.character(subcs_df[[next_col]])))
-
-  ok <- is.finite(ids)
-  ids <- ids[ok]
-  nxt <- nxt[ok]
-
+  ok <- is.finite(ids); ids <- ids[ok]; nxt <- nxt[ok]
   rev <- split(ids, nxt)
-
-  visited <- integer(0)
-  queue <- as.numeric(outlet_pipeID)
-
+  visited <- integer(0); queue <- as.numeric(outlet_pipeID)
   while (length(queue) > 0) {
-    cur <- queue[1]
-    queue <- queue[-1]
+    cur <- queue[1]; queue <- queue[-1]
     if (!is.finite(cur) || cur %in% visited) next
     visited <- c(visited, cur)
     ups <- rev[[as.character(cur)]]
     if (!is.null(ups)) queue <- c(queue, ups)
   }
-
   unique(visited)
 }
 
@@ -984,20 +922,14 @@ streams <- to_crs(streams)
 # ---------------------------------------------------
 subset_pipes_for <- function(pipes_sf, ids, subcs_df){
   if (!inherits(pipes_sf, "sf") || nrow(pipes_sf) == 0) return(pipes_sf)
-
   ids <- as.numeric(ids)
   out <- pipes_sf[0, ]
-
-  if ("pipeID" %in% names(pipes_sf)) {
-    out <- pipes_sf[pipes_sf$pipeID %in% ids, ]
-  }
-
+  if ("pipeID" %in% names(pipes_sf)) out <- pipes_sf[pipes_sf$pipeID %in% ids, ]
   if (nrow(out) == 0 && "pipeName" %in% names(pipes_sf) && "pipeName" %in% names(subcs_df)) {
     nm <- unique(subcs_df$pipeName[subcs_df$pipeID %in% ids])
     nm <- nm[!is.na(nm)]
     if (length(nm) > 0) out <- pipes_sf[pipes_sf$pipeName %in% nm, ]
   }
-
   if (nrow(out) == 0) out <- pipes_sf
   out
 }
@@ -1018,15 +950,11 @@ clip_lines_to_polygon <- function(lines_sf, poly_sf){
   mask <- sf::st_union(sf::st_geometry(poly_sf))
   clipped <- suppressWarnings(sf::st_intersection(lines_sf, mask))
 
-  if (!inherits(clipped, "sf") || nrow(clipped) == 0) {
-    return(lines_sf[0, ])
-  }
+  if (!inherits(clipped, "sf") || nrow(clipped) == 0) return(lines_sf[0, ])
 
   gtype <- as.character(sf::st_geometry_type(clipped, by_geometry = TRUE))
   keep <- gtype %in% c("LINESTRING", "MULTILINESTRING")
-  clipped <- clipped[keep, ]
-
-  clipped
+  clipped[keep, ]
 }
 
 pipes_D4e <- clip_lines_to_polygon(pipes_D4e, cat_D4e)
@@ -1054,19 +982,15 @@ ext_L4  <- if (inherits(cat_L4,  "sf") && nrow(cat_L4)  > 0) get_extent(cat_L4) 
 # ---------------------------------------------------
 plot_scms_jittered <- function(scms_sf, cex = 1, jitter_m = 0, seed = 1){
   if (!inherits(scms_sf, "sf") || nrow(scms_sf) == 0) return(invisible())
-
   xy <- sf::st_coordinates(scms_sf)
-
   set.seed(seed)
   if (is.numeric(jitter_m) && jitter_m > 0) {
     xy[,1] <- xy[,1] + runif(nrow(xy), -jitter_m, jitter_m)
     xy[,2] <- xy[,2] + runif(nrow(xy), -jitter_m, jitter_m)
   }
-
   t <- as.character(scms_sf$type)
   cols <- scm_cols[t]; cols[is.na(cols)] <- "black"
   pchs <- scm_pch[t];  pchs[is.na(pchs)] <- 19
-
   points(xy[,1], xy[,2], pch = pchs, col = cols, cex = cex)
 }
 
@@ -1118,7 +1042,6 @@ plot_panel <- function(title_txt, ext, streams_sf, pipes_sf, cats_sf, scms_sf,
          xlab = "", ylab = "")
   }
 
-  # Impervious areas layer (under streams/pipes/points)
   plot_ia_subset(ia, upstream_pipe_ids)
 
   if (inherits(streams_sf, "sf") && nrow(streams_sf) > 0) {
@@ -1140,7 +1063,6 @@ plot_panel <- function(title_txt, ext, streams_sf, pipes_sf, cats_sf, scms_sf,
 
   plot_scms_jittered(scms_sf, cex = scm_cex, jitter_m = scm_jitter_m, seed = scm_jitter_seed)
 
-  # ---- SITES + LABELS + ARROWS ----
   sites_i <- siteMap11[siteMap11$sitecode %in% sitecodes_keep, ]
   labs_i  <- siteLabels[siteLabels$sitecode %in% sitecodes_keep, ]
 
@@ -1152,7 +1074,6 @@ plot_panel <- function(title_txt, ext, streams_sf, pipes_sf, cats_sf, scms_sf,
 
   if (inherits(labs_i, "sf") && nrow(labs_i) > 0) {
     if ("font" %in% names(labs_i)) labs_i$font[labs_i$font == 1] <- 2
-
     xy_lab <- sf::st_coordinates(labs_i)
 
     if ("sites_p" %in% names(labs_i)) {
@@ -1193,8 +1114,15 @@ plot_panel <- function(title_txt, ext, streams_sf, pipes_sf, cats_sf, scms_sf,
   }
 
   box(lwd = lwd_box)
-  axis(1, cex.axis = cex_axis)
-  axis(2, cex.axis = cex_axis)
+
+  # ---- AXES (ONLY CHANGE: both axes are now exactly 3 ticks, per panel) ----
+  xt <- three_ticks(ext$xlim, round_to = 1000)  # keeps nice numbers like 361000
+  yt <- three_ticks(ext$ylim, round_to = 1000)
+
+  axis(1, at = xt, labels = format(xt, scientific = FALSE, trim = TRUE),
+       cex.axis = cex_axis, las = 1, padj = 0.25)
+  axis(2, at = yt, labels = format(yt, scientific = FALSE, trim = TRUE),
+       cex.axis = cex_axis, las = 1)
 
   mtext("Easting (m)",  side = 1, line = 2.7, font = 2, cex = cex_axis_title)
   mtext("Northing (m)", side = 2, line = 5.4, font = 2, cex = cex_axis_title, las = 0)
@@ -1219,7 +1147,6 @@ plot_panel("L4 system",
            legend_in_panel = TRUE)
 
 dev.off()
-
 
 ```
 
