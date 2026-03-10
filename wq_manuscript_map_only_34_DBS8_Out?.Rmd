@@ -1187,10 +1187,12 @@ pipe_Ln <- 53
 
 pipes_D4e_ids <- get_upstream_pipes(subcs_df, pipe_D4e)
 pipes_L4_ids  <- get_upstream_pipes(subcs_df, pipe_L4)
+pipes_Ln_ids  <- get_upstream_pipes(subcs_df, pipe_Ln)
 
 # SCMs actually plotted in each panel (same filters as your script)
 SCMs_D4e <- SCMs[SCMs$pipeID %in% pipes_D4e_ids, ]
 SCMs_L4  <- SCMs[SCMs$pipeID %in% pipes_L4_ids,  ]
+SCMs_Ln  <- SCMs[SCMs$pipeID %in% pipes_Ln_ids,  ]
 
 
 # --- summary table: total + counts by type ---
