@@ -301,7 +301,7 @@ cats_ctr_ll <- sf::st_transform(sf::st_sfc(cats_ctr, crs = sf::st_crs(catMap11_f
 # ---------------------------------------------------
 # 2) OUTPUT DEVICE
 # ---------------------------------------------------
-out_file <- "images/Fig1_catchment_extent_then_streams.tiff"
+out_file <- "MS_Figures/Fig1_new.tiff"
 
 if (use_ragg) {
   ragg::agg_tiff(out_file, width = 9.2, height = 7.0, units = "in",
@@ -999,7 +999,7 @@ plot_scms_jittered <- function(scms_sf, cex = 1, jitter_m = 0, seed = 1){
 # 9) Export device
 # ---------------------------------------------------
 dir.create("images", showWarnings = FALSE, recursive = TRUE)
-out_file <- "images/SCM_D4e_vs_L4_streams_pipes_catchments_sites_labels_arrows_LEGEND_SPLIT_v14_tighterLegends.tiff"
+out_file <- "MS_Figures/Fig2_new.tiff"
 
 W_IN <- 14.0
 H_IN <- 7.2
